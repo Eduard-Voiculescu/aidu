@@ -1,0 +1,243 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NAMESPACE="aidu-sessions"
+IMAGE_NAME="aidu-claude:latest"
+TEMPLATE_FILE="${SCRIPT_DIR}/k8s/session-template.yaml"
+
+show_help() {
+    cat <<EOF
+aidu-session - Manage isolated Claude Code sessions in k3d
+
+Usage: aidu-session <command> [options]
+       aidu-session --help | -h
+
+Description:
+    A CLI tool for creating and managing isolated Claude Code sessions running
+    in Kubernetes pods. Each session has dedicated storage, secrets, and resources.
+
+Commands:
+    create <session-name>    Create a new isolated Claude Code session
+    list                     List all active sessions
+    connect <session-name>   Connect to an existing session
+    delete <session-name>    Delete a session and its data
+    status <session-name>    Show status of a specific session
+    logs <session-name>      Show logs from a session
+    cleanup                  Remove all completed/failed sessions
+
+Options:
+    -h, --help              Show this help message
+
+Authentication:
+    Sessions use your Claude.ai Pro subscription credentials.
+    On first connect, run 'claude' and authenticate with your account.
+    Credentials persist in the session's storage.
+
+Examples:
+    aidu-session create my-project
+    aidu-session connect my-project
+    # Inside session: run 'claude' to authenticate
+    aidu-session list
+    aidu-session delete my-project
+
+For more information, see K3D-SETUP.md
+EOF
+    exit 0
+}
+
+usage() {
+    cat <<EOF
+Usage: aidu-session <command> [options]
+
+Commands:
+    create <session-name>           Create a new isolated Claude Code session
+    list                            List all active sessions
+    connect <session-name>          Connect to an existing session
+    delete <session-name>           Delete a session and its data
+    status <session-name>           Show status of a specific session
+    logs <session-name>             Show logs from a session
+    cleanup                         Remove all completed/failed sessions
+
+Run 'aidu-session --help' for more information.
+EOF
+    exit 1
+}
+
+check_prerequisites() {
+    if ! command -v kubectl &> /dev/null; then
+        echo "Error: kubectl is not installed"
+        exit 1
+    fi
+
+    if ! kubectl get namespace "$NAMESPACE" &> /dev/null; then
+        echo "Creating namespace $NAMESPACE..."
+        kubectl create namespace "$NAMESPACE"
+    fi
+}
+
+create_session() {
+    local session_name=$1
+
+    if [[ -z "$session_name" ]]; then
+        echo "Error: Session name is required"
+        usage
+    fi
+
+    if [[ ! "$session_name" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+        echo "Error: Session name must be lowercase alphanumeric with hyphens"
+        exit 1
+    fi
+
+    if kubectl get pod "$session_name" -n "$NAMESPACE" &> /dev/null; then
+        echo "Error: Session '$session_name' already exists"
+        exit 1
+    fi
+
+    echo "Creating session: $session_name"
+
+    sed -e "s/SESSION_NAME/$session_name/g" \
+        "$TEMPLATE_FILE" | kubectl apply -f -
+
+    echo "Waiting for pod to be ready..."
+    kubectl wait --for=condition=Ready pod/"$session_name" -n "$NAMESPACE" --timeout=120s
+
+    echo ""
+    echo "Session '$session_name' created successfully!"
+    echo ""
+    echo "Connect with: aidu-session connect $session_name"
+    echo ""
+    echo "First time setup:"
+    echo "  1. Once connected, run: claude"
+    echo "  2. Authenticate with your Claude.ai Pro account"
+    echo "  3. Credentials will persist in this session's storage"
+}
+
+list_sessions() {
+    echo "Active Claude Code sessions:"
+    kubectl get pods -n "$NAMESPACE" -l app=claude-code-session \
+        -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,AGE:.metadata.creationTimestamp
+}
+
+connect_session() {
+    local session_name=$1
+
+    if [[ -z "$session_name" ]]; then
+        echo "Error: Session name is required"
+        usage
+    fi
+
+    if ! kubectl get pod "$session_name" -n "$NAMESPACE" &> /dev/null; then
+        echo "Error: Session '$session_name' does not exist"
+        exit 1
+    fi
+
+    echo "Connecting to session: $session_name"
+    echo "Type 'exit' to disconnect from the session"
+    echo "---"
+
+    kubectl exec -it "$session_name" -n "$NAMESPACE" -- /bin/bash
+}
+
+delete_session() {
+    local session_name=$1
+
+    if [[ -z "$session_name" ]]; then
+        echo "Error: Session name is required"
+        usage
+    fi
+
+    if ! kubectl get pod "$session_name" -n "$NAMESPACE" &> /dev/null; then
+        echo "Error: Session '$session_name' does not exist"
+        exit 1
+    fi
+
+    read -p "Are you sure you want to delete session '$session_name'? This will remove all data. (y/N): " -n 1 -r
+    echo
+
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Cancelled"
+        exit 0
+    fi
+
+    echo "Deleting session: $session_name"
+    kubectl delete pod "$session_name" -n "$NAMESPACE"
+    kubectl delete pvc "${session_name}-pvc" -n "$NAMESPACE"
+
+    echo "Session '$session_name' deleted successfully"
+}
+
+status_session() {
+    local session_name=$1
+
+    if [[ -z "$session_name" ]]; then
+        echo "Error: Session name is required"
+        usage
+    fi
+
+    echo "Status for session: $session_name"
+    kubectl describe pod "$session_name" -n "$NAMESPACE"
+}
+
+logs_session() {
+    local session_name=$1
+
+    if [[ -z "$session_name" ]]; then
+        echo "Error: Session name is required"
+        usage
+    fi
+
+    kubectl logs "$session_name" -n "$NAMESPACE" --tail=100 -f
+}
+
+cleanup_sessions() {
+    echo "Cleaning up completed/failed sessions..."
+    kubectl delete pods -n "$NAMESPACE" --field-selector=status.phase==Succeeded
+    kubectl delete pods -n "$NAMESPACE" --field-selector=status.phase==Failed
+    echo "Cleanup complete"
+}
+
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+    fi
+
+    case "$1" in
+        -h|--help)
+            show_help
+            ;;
+    esac
+
+    check_prerequisites
+
+    case "$1" in
+        create)
+            create_session "$2"
+            ;;
+        list)
+            list_sessions
+            ;;
+        connect)
+            connect_session "$2"
+            ;;
+        delete)
+            delete_session "$2"
+            ;;
+        status)
+            status_session "$2"
+            ;;
+        logs)
+            logs_session "$2"
+            ;;
+        cleanup)
+            cleanup_sessions
+            ;;
+        *)
+            echo "Error: Unknown command '$1'"
+            usage
+            ;;
+    esac
+}
+
+main "$@"

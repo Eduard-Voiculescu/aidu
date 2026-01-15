@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: SESSION_NAME-pvc
+  namespace: aidu-sessions
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: local-path
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: SESSION_NAME
+  namespace: aidu-sessions
+  labels:
+    app: claude-code-session
+    session: SESSION_NAME
+spec:
+  containers:
+  - name: claude-code
+    image: localhost:5050/aidu-claude:latest
+    imagePullPolicy: Never
+    stdin: true
+    tty: true
+    env:
+    - name: SESSION_NAME
+      value: "SESSION_NAME"
+    - name: HOME
+      value: "/workspace"
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+  volumes:
+  - name: workspace
+    persistentVolumeClaim:
+      claimName: SESSION_NAME-pvc
+  restartPolicy: Never

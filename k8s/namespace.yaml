@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aidu-sessions
+  labels:
+    name: aidu-sessions
