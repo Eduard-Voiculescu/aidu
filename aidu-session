@@ -26,6 +26,7 @@ Commands:
     status <session-name>    Show status of a specific session
     logs <session-name>      Show logs from a session
     cleanup                  Remove all completed/failed sessions
+    orchestrate <task>       Run a task using the manager/worker orchestration
 
 Options:
     -h, --help              Show this help message
@@ -41,6 +42,7 @@ Examples:
     # Inside session: run 'claude' to authenticate
     aidu-session list
     aidu-session delete my-project
+    aidu-session orchestrate "implement user authentication"
 
 For more information, see K3D-SETUP.md
 EOF
@@ -59,6 +61,7 @@ Commands:
     status <session-name>           Show status of a specific session
     logs <session-name>             Show logs from a session
     cleanup                         Remove all completed/failed sessions
+    orchestrate <task>              Run a task using manager/worker orchestration
 
 Run 'aidu-session --help' for more information.
 EOF
@@ -198,6 +201,30 @@ cleanup_sessions() {
     echo "Cleanup complete"
 }
 
+orchestrate_task() {
+    local task_description=$1
+
+    if [[ -z "$task_description" ]]; then
+        echo "Error: Task description is required"
+        usage
+    fi
+
+    if [[ ! -f "$SCRIPT_DIR/bin/aidu-manager" ]]; then
+        echo "Error: aidu-manager binary not found"
+        echo "Please build it first: cd $SCRIPT_DIR && go build -o bin/aidu-manager ./cmd/aidu-manager"
+        exit 1
+    fi
+
+    echo "Starting task orchestration..."
+    echo "Task: $task_description"
+    echo "---"
+
+    "$SCRIPT_DIR/bin/aidu-manager" \
+        --namespace "$NAMESPACE" \
+        --agents-file "$SCRIPT_DIR/AGENTS.md" \
+        "$task_description"
+}
+
 main() {
     if [[ $# -eq 0 ]]; then
         usage
@@ -232,6 +259,9 @@ main() {
             ;;
         cleanup)
             cleanup_sessions
+            ;;
+        orchestrate)
+            orchestrate_task "$2"
             ;;
         *)
             echo "Error: Unknown command '$1'"
