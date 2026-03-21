@@ -1,3 +1,6 @@
 JOURNAL.md
 k3d-storage
-aidu-manager
+bin/
+logs/
+devel/
+.DS_Store

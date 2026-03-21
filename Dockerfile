@@ -15,8 +15,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 
 RUN npm install -g @anthropic-ai/claude-code
 
-RUN npm install -g opencode-ai
-
 RUN useradd -m -s /bin/bash claude && \
     mkdir -p /workspace && \
     chown -R claude:claude /workspace
